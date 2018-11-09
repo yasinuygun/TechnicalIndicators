@@ -8,4 +8,4 @@ This project is done by [Yasin Uygun](https://github.com/yasinuygun) and [Mehmet
 
 # Repository Contents
 
-`TechnicalIndicators.indicators` namespace contains indicators' normal and MapReduce versions.
+`indicators` namespace is the core code of this repository, the other codes are mostly written for testing purposes.

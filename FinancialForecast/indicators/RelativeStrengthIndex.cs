@@ -111,75 +111,71 @@ namespace TechnicalIndicators.indicators
                 OutputOptions = MapReduceOutputOptions.Replace("rsiOut", "financialData", false)
             };
 
+            double[] avg;
             BsonJavaScript mapper = new BsonJavaScript(@"
                 function() {
-	                if (!equalityFunction(this.Tarih, limitDate) && this.Tarih < limitDate)
+                    if (!equalityFunction(this.Tarih, limitDate) && this.Tarih < limitDate)
                         return;
                     else if (!equalityFunction(this.Tarih, lastDate) && this.Tarih > lastDate)
                         return;
 
-                    var dateIndex = binarySearch(dates, this.Tarih);
-                    if (dateIndex == -1)
-    	                return;
+                    var dateIndex;
 
-                    emit(dates[dateIndex], {date: this.Tarih, close: this.Kapanis});
-                    if (dateIndex != 0)
-    	                emit(dates[dateIndex-1], {date: this.Tarih, close: this.Kapanis});
+                    dateIndex = binarySearch(dates, this.Tarih);
+                    if (dateIndex == -1)
+                        return;
+
+                    for (var i = 0; i < period && dateIndex >= 0; i++, dateIndex--) {
+                        if (dates[dateIndex] > startingDate || equalityFunction(dates[dateIndex], startingDate))
+                            emit(dates[dateIndex], {date: this.Tarih, headClose : this.Kapanis, tailClose : this.Kapanis, gain: 0 , loss: 0});
+                    }
                 }
             ");
 
             BsonJavaScript reducer = new BsonJavaScript(@"
-                function(key,values){
-                    if (values[1].date > values[0].date)
-    	                return {date: key, close: values[1].close - values[0].close};
-                    else
-    	                return {date: key, close: values[0].close - values[1].close};
+                function(key, values) {
+	                values.sort(function(a, b) {
+		                return a.date < b.date;
+	                });
+
+                    sumGain = values[0].gain; 
+                    sumLoss = values[0].loss;
+                    var diff;
+    
+                    for(var i = 0; i < values.length - 1; i++) {
+                        sumGain += values[i+1].gain;   
+                        sumLoss += values[i+1].loss;
+                        diff = values[i].tailClose - values[i+1].headClose;
+                        if(diff > 0) 
+                            sumGain += diff;
+                        else 
+                            sumLoss -= diff;
+                    }
+
+                    return {date: values[0].date, headClose: values[0].headClose, tailClose: values[values.length-1].tailClose, gain: sumGain, loss: sumLoss};
                 }
             ");
 
+            BsonJavaScript finalizer = new BsonJavaScript(@"
+                function(key, reducedValue) {
+                    if (reducedValue.loss == 0) return 100;
+                    reducedValue = 100 - 100 / (1 + (reducedValue.gain / reducedValue.loss));
+                    return reducedValue;
+                }
+            ");
+
+            options.Finalize = finalizer;
+
             List<BsonDocument> resultSet = MongoDBService.GetService().MapReduceMany(mapper, reducer, options);
 
-            double sumLoss = 0, sumGain = 0;
+            avg = new double[numberOfData];
 
-            int i, j;
-            for (i = resultSet.Count - 1, j = 1; j < period; i--, j++)
+            for (int i = 0, j = numberOfData - 1; i < numberOfData; i++, j--)
             {
-                var diff = resultSet.ElementAt(i).GetElement(1).Value.ToBsonDocument().GetElement(1).Value.ToDouble();
-                if (diff > 0)
-                    sumGain += diff;
-                else
-                    sumLoss -= diff;
+                avg[i] = resultSet.ElementAt(j).GetElement(1).Value.ToDouble();
             }
 
-            double[] result = new double[numberOfData]; // result returns the calculated rsi value.
-            j = 0;
-
-            if (sumLoss < 0)
-                result[j++] = 100;
-            else
-                result[j++] = 100 - (100 / (1 + (sumGain / sumLoss)));
-
-            for (; j < numberOfData; j++)
-            {
-                var diffLast = resultSet.ElementAt(i - j + 1).GetElement(1).Value.ToBsonDocument().GetElement(1).Value.ToDouble();
-                var diffFirst = resultSet.ElementAt(i - j + period).GetElement(1).Value.ToBsonDocument().GetElement(1).Value.ToDouble();
-                if (diffLast > 0)
-                    sumGain += diffLast;
-                else
-                    sumLoss -= diffLast;
-
-                if (diffFirst > 0)
-                    sumGain -= diffFirst;
-                else
-                    sumLoss += diffFirst;
-
-                if (sumLoss == 0)
-                    result[j] = 100;
-                else
-                    result[j] = 100 - (100 / (1 + (sumGain / sumLoss)));
-            }
-
-            return result;
+            return avg;
         }
     }
 }

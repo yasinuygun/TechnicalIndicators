@@ -90,25 +90,27 @@ namespace TechnicalIndicators.indicators
             return avg;
         }
 
-        public static double[] Exponential(string code, DateTime targetDate, int period = 14)
+        public static double[] Exponential(string code, DateTime targetDate, int period = 14, int numberOfData = 1)
         {
             if (period <= 0)
-                throw new IndicatorException("Periyot pozitif sayı olmalıdır.");
+                throw new IndicatorException("Period must be positive.");
 
-            List<BsonDocument> data = IndicatorService.GetData(code, targetDate, "Kapanis", period);
+            List<BsonDocument> data = IndicatorService.GetData(code, targetDate, "Kapanis", numberOfData);
             if (data.Count < period)
                 period = data.Count;
 
-            double[] avg = calculateEMA(period, data);
+            double[] avg = calculateEMA(period, numberOfData, data);
 
             return avg;
         }
 
-        public static double[] calculateEMA(int period, List<BsonDocument> data)
+        public static double[] calculateEMA(int period, int numberOfData, List<BsonDocument> data)
         {
-            double[] avg = new double[period];
+            if (data.Count < numberOfData)
+                numberOfData = data.Count;
+            double[] avg = new double[numberOfData];
             double coeff = 2.0 / (1 + period);
-            int i = period - 1;
+            int i = numberOfData - 1;
             avg[i] = data.ElementAt(i--).GetElement(0).Value.ToDouble();
             for (; i >= 0; i--)
             {
@@ -118,14 +120,14 @@ namespace TechnicalIndicators.indicators
             return avg;
         }
 
-        public static double[] calculateEMA(int period, double[] data)
+        public static double[] calculateEMA(int period, int numberOfData, double[] data)
         {
-            if (data.Length < period)
-                period = data.Length;
+            if (data.Length < numberOfData)
+                numberOfData = data.Length;
 
-            double[] avg = new double[period];
+            double[] avg = new double[numberOfData];
             double coeff = 2.0 / (1 + period);
-            int i = period - 1;
+            int i = numberOfData - 1;
             avg[i] = data[i--];
             for (; i >= 0; i--)
             {
@@ -139,7 +141,7 @@ namespace TechnicalIndicators.indicators
         /* MapReduce implementations of the indicators */
         /* ------------------------------------------- */
 
-        public static double[] SimpleMR(string code, DateTime targetDate, int period = 14, int numberOfData = 1)
+        public static double[] SimpleMR(string code, DateTime targetDate, int period = 14, int numberOfData = 30)
         {
             if (period <= 0)
                 throw new IndicatorException("Periyot pozitif sayı olmalıdır.");
@@ -174,58 +176,50 @@ namespace TechnicalIndicators.indicators
 
             BsonJavaScript mapper = new BsonJavaScript(@"
                 function() {
-	                if (this.Tarih < limitDate || this.Tarih > lastDate)
+	                if (!equalityFunction(this.Tarih, limitDate) && this.Tarih < limitDate)
+		                return;
+	                else if (!equalityFunction(this.Tarih, lastDate) && this.Tarih > lastDate)
 		                return;
 	
-	                var dateIndex = binarySearch(dates, this.Tarih);
+	                var dateIndex;
 	
-	                if (dateIndex < period) {
-		                emit(dates[0], {close: this.Kapanis, date: this.Tarih});
-		                emit(dates[dateIndex + 1], {close: this.Kapanis, date: this.Tarih});
-	                } else if (dateIndex < numberOfData - period) {
-		                emit(dates[dateIndex - period + 1], {close: this.Kapanis, date: this.Tarih});
-		                emit(dates[dateIndex + 1], {close: this.Kapanis, date: this.Tarih});
-	                } else {
-		                emit(dates[dateIndex - period + 1], {close: this.Kapanis, date: this.Tarih});
+	                dateIndex = binarySearch(dates, this.Tarih);
+	                if (dateIndex == -1)
+		                return;
+	
+	                for (var i = 0; i < period && dateIndex >= 0; i++, dateIndex--) {
+		                if (dates[dateIndex] > startingDate || equalityFunction(dates[dateIndex], startingDate))
+			                emit(dates[dateIndex], this.Kapanis);
 	                }
                 }
             ");
 
             BsonJavaScript reducer = new BsonJavaScript(@"
                 function(key, values) {
-	                if (equalityFunction(key, dates[0])) {
-		                var result = {close: values[0].close, date: key};
-		                for (var i = 1; i < values.length; i++) {
-			                result.close += values[i].close;
-		                }
-		                return result;
-	                } else {
-		                var result = {close: 0, date: key};
-		                if (values[1].date < values[0].date) {
-			                result.close = values[1].close - values[0].close;
-		                } else {
-			                result.close = values[0].close - values[1].close;
-		                }
-		                return result;
-	                }
+	                return Array.sum(values);
                 }
             ");
 
-            List<BsonDocument> resultSet = MongoDBService.GetService().MapReduceMany(mapper, reducer, options);
+            BsonJavaScript finalizer = new BsonJavaScript(@"
+                function(key, reducedValue) {
+	                return reducedValue / period;
+                }
+            ");
+
+            options.Finalize = finalizer;
 
             double[] avg = new double[numberOfData];
-            double sumOfDatas = resultSet.ElementAt(resultSet.Count - 1).GetElement(1).Value.ToBsonDocument().GetElement(0).Value.ToDouble();
-            avg[0] = sumOfDatas / period;
-            for (int i = 1, j = resultSet.Count - 2; i < numberOfData; i++, j--)
+
+            List<BsonDocument> resultSet = MongoDBService.GetService().MapReduceMany(mapper, reducer, options);
+            for (int i = 0, j = numberOfData - 1; i < numberOfData; i++, j--)
             {
-                sumOfDatas += resultSet.ElementAt(j).GetElement(1).Value.ToBsonDocument().GetElement(0).Value.ToDouble();
-                avg[i] = sumOfDatas / period;
+                avg[i] = resultSet.ElementAt(j).GetElement(1).Value.ToDouble();
             }
 
             return avg;
         }
 
-        public static double[] WeightedMR(string code, DateTime targetDate, int period = 14, int numberOfData = 1)
+        public static double[] WeightedMR(string code, DateTime targetDate, int period = 14, int numberOfData = 30)
         {
             if (period <= 0)
                 throw new IndicatorException("Periyot pozitif sayı olmalıdır.");
@@ -259,6 +253,7 @@ namespace TechnicalIndicators.indicators
                 Scope = new BsonDocument { { "startingDate", startingDate }, { "lastDate", lastDate }, { "limitDate", limitDate }, { "period", period }, { "denominator", denominator }, { "numberOfData", numberOfData }, { "binarySearch", MapReduceHelpers.BinarySearch }, { "equalityFunction", MapReduceHelpers.IsDatesEqual }, { "dates", new BsonArray(dates) } }
             };
 
+            double[] avg;
             BsonJavaScript mapper = new BsonJavaScript(@"
                 function() {
 	                if (!equalityFunction(this.Tarih, limitDate) && this.Tarih < limitDate)
@@ -266,93 +261,93 @@ namespace TechnicalIndicators.indicators
 	                else if (!equalityFunction(this.Tarih, lastDate) && this.Tarih > lastDate)
 		                return;
 	
-	                var dateIndex = binarySearch(dates, this.Tarih);
+	                var dateIndex;
 	
-	                if (dateIndex < period) {
-		                emit(dates[0], {sumOfWeightedCloses: this.Kapanis * (period - dateIndex), sumOfCloses: this.Kapanis, close: this.Kapanis, date: this.Tarih});
-		                emit(dates[dateIndex + 1], {sumOfWeightedCloses: this.Kapanis, sumOfCloses: this.Kapanis, close: this.Kapanis, date: this.Tarih});
-	                } else if (dateIndex < numberOfData - period) {
-		                emit(dates[dateIndex - period + 1], {sumOfWeightedCloses: this.Kapanis, sumOfCloses: this.Kapanis, close: this.Kapanis, date: this.Tarih});
-		                emit(dates[dateIndex + 1], {sumOfWeightedCloses: this.Kapanis, sumOfCloses: this.Kapanis, close: this.Kapanis, date: this.Tarih});
-	                } else {
-		                emit(dates[dateIndex - period + 1], {sumOfWeightedCloses: this.Kapanis, sumOfCloses: this.Kapanis, close: this.Kapanis, date: this.Tarih});
+	                dateIndex = binarySearch(dates, this.Tarih);
+	                if (dateIndex == -1)
+		                return;
+	
+	                var factor = period;
+
+	                for (var i = 0; i < period && dateIndex >= 0; i++, dateIndex--) {
+		                if (dates[dateIndex] > startingDate || equalityFunction(dates[dateIndex], startingDate))
+			                emit(dates[dateIndex], this.Kapanis * factor);
+		                factor--;
 	                }
                 }
             ");
 
             BsonJavaScript reducer = new BsonJavaScript(@"
                 function(key, values) {
-	                if (equalityFunction(key, dates[0])) {
-		                var result = {sumOfWeightedCloses: values[0].sumOfWeightedCloses, sumOfCloses: values[0].sumOfCloses, close: 0, date: key};
-		                for (var i = 1; i < values.length; i++) {
-			                result.sumOfWeightedCloses += values[i].sumOfWeightedCloses;
-			                result.sumOfCloses += values[i].sumOfCloses;
-		                }
-		                return result;
-	                } else {
-		                var result = {sumOfWeightedCloses: 0, sumOfCloses: 0, close: 0, date: key};
-		                if (values[1].date < values[0].date) {
-			                result.sumOfWeightedCloses = values[1].sumOfWeightedCloses - period * values[0].sumOfWeightedCloses;
-			                result.sumOfCloses = values[1].sumOfCloses - values[0].sumOfCloses;
-			                result.close = values[1].close;
-		                } else {
-			                result.sumOfWeightedCloses = values[0].sumOfWeightedCloses - period * values[1].sumOfWeightedCloses;
-			                result.sumOfCloses = values[0].sumOfCloses - values[1].sumOfCloses;
-			                result.close = values[0].close;
-		                }
-		                return result;
-	                }
+	                return Array.sum(values);
                 }
             ");
 
+            BsonJavaScript finalizer = new BsonJavaScript(@"
+                function(key, reducedValue) {
+	                return reducedValue / denominator;
+                }
+            ");
+
+            options.Finalize = finalizer;
+
             List<BsonDocument> resultSet = MongoDBService.GetService().MapReduceMany(mapper, reducer, options);
-            double[] avg = new double[numberOfData];
 
-            int j = resultSet.Count - 1;
-            double sumOfWeightedCloses = resultSet.ElementAt(j).GetElement(1).Value.ToBsonDocument().GetElement(0).Value.ToDouble();
-            double sumOfCloses = resultSet.ElementAt(j).GetElement(1).Value.ToBsonDocument().GetElement(1).Value.ToDouble();
-            j--;
+            avg = new double[numberOfData];
 
-            avg[0] = sumOfWeightedCloses / denominator;
-
-            for (int i = 1; i < numberOfData; i++, j--)
+            for (int i = 0, j = numberOfData - 1; i < numberOfData; i++, j--)
             {
-                sumOfCloses += resultSet.ElementAt(j).GetElement(1).Value.ToBsonDocument().GetElement(1).Value.ToDouble();
-                sumOfWeightedCloses += resultSet.ElementAt(j).GetElement(1).Value.ToBsonDocument().GetElement(0).Value.ToDouble() + sumOfCloses - resultSet.ElementAt(j).GetElement(1).Value.ToBsonDocument().GetElement(2).Value.ToDouble();
-                avg[i] = sumOfWeightedCloses / denominator;
+                avg[i] = resultSet.ElementAt(j).GetElement(1).Value.ToDouble();
             }
 
             return avg;
         }
 
-        public static double[] ExponentialMR(string code, DateTime targetDate, int period = 14)
+        public static double[] ExponentialMR(string code, DateTime targetDate, int period = 14, int numberOfData = 30)
         {
             if (period <= 0)
-                throw new IndicatorException("Periyot pozitif sayı olmalıdır.");
+                throw new IndicatorException("Period must be positive.");
 
             int dataCount = IndicatorService.DataCount(code, targetDate);
-            if (dataCount < period)
-                period = dataCount;
+            if (dataCount < numberOfData)
+                numberOfData = dataCount;
 
-            double coeff = 2.0 / (1 + period);
+            double alpha = 2.0 / (1 + period);
+            double beta = 1 - alpha;
+            double minimumCoefficient = 0.000001;
+            int epoch = (int)Math.Ceiling(Math.Log(minimumCoefficient / alpha, Math.Floor(beta * 1000) / 1000));
 
             BsonJavaScript mapper = new BsonJavaScript(@"
-                function(){
-                    if (this.Tarih < limitDate || this.Tarih > lastDate)
+                function() {
+	                if (!equalityFunction(this.Tarih, limitDate) && this.Tarih < limitDate)
 		                return;
-		            emit(this.Tarih, this.Kapanis);
+	                else if (!equalityFunction(this.Tarih, lastDate) && this.Tarih > lastDate)
+		                return;
+
+	                var dateIndex = binarySearch(dates, this.Tarih);
+	                if (dateIndex == -1)
+		                return;
+	
+	                var value;
+	                if (dateIndex == numberOfData-1) {
+		                value = this.Kapanis;
+		                for (var i = dateIndex, j = 0; j < epoch && i >= 0; i--, j++) {
+			                emit(dates[i], value);
+			                value = value * beta;
+		                }
+	                } else {
+		                value = this.Kapanis * alpha;
+		                for (var i = dateIndex, j = 0; j < epoch && i >= 0; i--, j++) {
+			                emit(dates[i], value);
+			                value = value * beta;
+		                }
+	                }
                 }
             ");
 
             BsonJavaScript reducer = new BsonJavaScript(@"
                 function(key,values){
-                    return null;
-                }
-            ");
-
-            BsonJavaScript finalizer = new BsonJavaScript(@"
-                function(key, reducedValue){
-                    return reducedValue * coeff;                    
+                    return Array.sum(values);
                 }
             ");
 
@@ -362,31 +357,21 @@ namespace TechnicalIndicators.indicators
 
             var projection = new BsonDocument { { "_id", 0 }, { "Tarih", 1 } };
             var lastDate = MongoDBService.GetService().FindOneSortProject(filter, sort, projection).GetElement(0).Value.ToLocalTime();
-            var limitDate = MongoDBService.GetService().FindOneSortProjectSkip(filter, sort, projection, period -2).GetElement(0).Value.ToLocalTime();
-            var scope = new BsonDocument { { "lastDate", lastDate }, { "limitDate", limitDate }, { "coeff", coeff } };
+            var limitDate = MongoDBService.GetService().FindOneSortProjectSkip(filter, sort, projection, numberOfData - 1).GetElement(0).Value.ToLocalTime();
+            var dates = IndicatorService.GetData(code, targetDate, "Tarih", numberOfData).Select(p => p.GetElement(0).Value.ToLocalTime()).ToArray();
+            var scope = new BsonDocument { { "numberOfData", numberOfData }, { "epoch", epoch }, { "alpha", alpha }, { "beta", beta }, { "lastDate", lastDate }, { "limitDate", limitDate }, { "dates", new BsonArray(dates) }, { "binarySearch", MapReduceHelpers.BinarySearch }, { "equalityFunction", MapReduceHelpers.IsDatesEqual } };
 
             MapReduceOptions<BsonDocument, BsonDocument> options = new MapReduceOptions<BsonDocument, BsonDocument>
             {
                 Filter = filter,
                 Sort = sort,
-                Finalize = finalizer,
                 Scope = scope,
                 OutputOptions = MapReduceOutputOptions.Replace("emaOut", "financialData", false)
             };
 
-            List<BsonDocument> data = IndicatorService.GetData(code, targetDate, "Kapanis", period);
-
-            int i = period - 1;
-            double[] ema = new double[i + 1];
-            ema[i] = data.ElementAt(i--).GetElement(0).Value.ToDouble();
-
             double[] values = MongoDBService.GetService().MapReduceMany(mapper, reducer, options).Select(p => p.GetElement("value").Value.ToDouble()).ToArray();
-
-            for (int j = 0; i >= 0; i--, j++)
-            {
-                ema[i] = values[j] + (1 - coeff) * ema[i + 1];
-            }
-            return ema;
+            Array.Reverse(values);
+            return values;
         }
     }
 }
