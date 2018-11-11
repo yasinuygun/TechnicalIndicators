@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using MongoDB.Bson;
@@ -314,8 +314,7 @@ namespace TechnicalIndicators.indicators
 
             double alpha = 2.0 / (1 + period);
             double beta = 1 - alpha;
-            double minimumCoefficient = 0.000001;
-            int epoch = (int)Math.Ceiling(Math.Log(minimumCoefficient / alpha, Math.Floor(beta * 1000) / 1000));
+            double minimumCoefficient = 0.001;
 
             BsonJavaScript mapper = new BsonJavaScript(@"
                 function() {
@@ -327,8 +326,9 @@ namespace TechnicalIndicators.indicators
 	                var dateIndex = binarySearch(dates, this.Tarih);
 	                if (dateIndex == -1)
 		                return;
-	
-	                var value;
+	                
+                    var epoch = Math.log(minimumCoefficient / (alpha * this.Kapanis)) / Math.log(beta);
+                    var value;
 	                if (dateIndex == numberOfData-1) {
 		                value = this.Kapanis;
 		                for (var i = dateIndex, j = 0; j < epoch && i >= 0; i--, j++) {
@@ -359,7 +359,7 @@ namespace TechnicalIndicators.indicators
             var lastDate = MongoDBService.GetService().FindOneSortProject(filter, sort, projection).GetElement(0).Value.ToLocalTime();
             var limitDate = MongoDBService.GetService().FindOneSortProjectSkip(filter, sort, projection, numberOfData - 1).GetElement(0).Value.ToLocalTime();
             var dates = IndicatorService.GetData(code, targetDate, "Tarih", numberOfData).Select(p => p.GetElement(0).Value.ToLocalTime()).ToArray();
-            var scope = new BsonDocument { { "numberOfData", numberOfData }, { "epoch", epoch }, { "alpha", alpha }, { "beta", beta }, { "lastDate", lastDate }, { "limitDate", limitDate }, { "dates", new BsonArray(dates) }, { "binarySearch", MapReduceHelpers.BinarySearch }, { "equalityFunction", MapReduceHelpers.IsDatesEqual } };
+            var scope = new BsonDocument { { "numberOfData", numberOfData }, { "minimumCoefficient", minimumCoefficient }, { "alpha", alpha }, { "beta", beta }, { "lastDate", lastDate }, { "limitDate", limitDate }, { "dates", new BsonArray(dates) }, { "binarySearch", MapReduceHelpers.BinarySearch }, { "equalityFunction", MapReduceHelpers.IsDatesEqual } };
 
             MapReduceOptions<BsonDocument, BsonDocument> options = new MapReduceOptions<BsonDocument, BsonDocument>
             {
