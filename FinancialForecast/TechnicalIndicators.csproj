@@ -7,8 +7,8 @@
     <ProjectGuid>{78B6D406-5F5D-4755-849A-FAA39F9E348B}</ProjectGuid>
     <OutputType>WinExe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>TechnicalIndicators</RootNamespace>
-    <AssemblyName>TechnicalIndicators</AssemblyName>
+    <RootNamespace>FinancialForecast</RootNamespace>
+    <AssemblyName>FinancialForecast</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>

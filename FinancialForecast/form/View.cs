@@ -21,6 +21,8 @@ namespace TechnicalIndicators.form
         private int FastKPeriod, FastDPeriod, SlowDPeriod; // Stochastics Parameters
         private int WilliamsRPeriod; // Williams' %R Parameter
 
+        private int NumberOfData = 30;
+
         public View()
         {
             InitializeComponent();
@@ -35,7 +37,7 @@ namespace TechnicalIndicators.form
             codeSelectionPanel.BringToFront();
 
             /* Load codes to the combobox. */
-            codeSelectionComboBox.Items.AddRange(IndicatorService.GetCodeList().Select(p => p.GetElement(0).Value.ToString()).ToArray());
+            codeSelectionComboBox.Items.AddRange(IndicatorService.GetCodeList().Select(p => p.GetElement(0).Value.ToString()).OrderBy(p => p).ToArray());
             codeSelectionComboBox.SelectedIndex = 0;
 
             indicatorSelectionComboBox.SelectedIndex = 0;
@@ -87,6 +89,7 @@ namespace TechnicalIndicators.form
             */
 
             MapReduceAllowed = mapReduceCheck.Checked;
+            NumberOfData = (int)numberOfDataSelector.Value;
 
             switch (indicatorSelectionComboBox.SelectedIndex)
             {
@@ -168,19 +171,19 @@ namespace TechnicalIndicators.form
                 ChartType = SeriesChartType.Line
             };
 
-            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, MAVPeriod);
+            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, NumberOfData);
             double[] smaData, wmaData, emaData;
             if (MapReduceAllowed)
             {
-                smaData = MovingAverage.SimpleMR(Code, TargetDate, MAVPeriod, MAVPeriod);
-                wmaData = MovingAverage.WeightedMR(Code, TargetDate, MAVPeriod, MAVPeriod);
-                emaData = MovingAverage.ExponentialMR(Code, TargetDate, MAVPeriod, MAVPeriod);
+                smaData = MovingAverage.SimpleMR(Code, TargetDate, MAVPeriod, NumberOfData);
+                wmaData = MovingAverage.WeightedMR(Code, TargetDate, MAVPeriod, NumberOfData);
+                emaData = MovingAverage.ExponentialMR(Code, TargetDate, MAVPeriod, NumberOfData);
             }
             else
             {
-                smaData = MovingAverage.Simple(Code, TargetDate, MAVPeriod, MAVPeriod);
-                wmaData = MovingAverage.Weighted(Code, TargetDate, MAVPeriod, MAVPeriod);
-                emaData = MovingAverage.Exponential(Code, TargetDate, MAVPeriod, MAVPeriod);
+                smaData = MovingAverage.Simple(Code, TargetDate, MAVPeriod, NumberOfData);
+                wmaData = MovingAverage.Weighted(Code, TargetDate, MAVPeriod, NumberOfData);
+                emaData = MovingAverage.Exponential(Code, TargetDate, MAVPeriod, NumberOfData);
             }
 
             DateTime date;
@@ -272,9 +275,9 @@ namespace TechnicalIndicators.form
 
             triggerLineChart.Series.Add(triggerLineSeries);
 
-            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, 30);
+            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, NumberOfData);
 
-            MovingAverageConvergenceDivergence macd = new MovingAverageConvergenceDivergence(Code, TargetDate, FirstPeriod, SecondPeriod, TriggerPeriod, 30, MapReduceAllowed);
+            MovingAverageConvergenceDivergence macd = new MovingAverageConvergenceDivergence(Code, TargetDate, FirstPeriod, SecondPeriod, TriggerPeriod, NumberOfData, MapReduceAllowed);
             double[] emaFirst = macd.EmaFirst;
             double[] emaSecond = macd.EmaSecond;
             double[] macdLine = macd.MacdLine;
@@ -356,12 +359,12 @@ namespace TechnicalIndicators.form
             rsiDataResultChart.Series.Add(closeSeries);
             rsiIndicatorResultChart.Series.Add(rsiSeries);
 
-            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, RSIPeriod);
+            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, NumberOfData);
             double[] rsi;
             if (MapReduceAllowed)
-                rsi = RelativeStrengthIndex.RsiMR(Code, TargetDate, RSIPeriod, RSIPeriod);
+                rsi = RelativeStrengthIndex.RsiMR(Code, TargetDate, RSIPeriod, NumberOfData);
             else
-                rsi = RelativeStrengthIndex.Rsi(Code, TargetDate, RSIPeriod, RSIPeriod);
+                rsi = RelativeStrengthIndex.Rsi(Code, TargetDate, RSIPeriod, NumberOfData);
 
             DateTime date;
             for (int i = 0; i < rsi.Length; i++)
@@ -438,13 +441,13 @@ namespace TechnicalIndicators.form
             stochasticsIndicatorChart.Series.Add(fastDSeries);
             stochasticsIndicatorChart.Series.Add(slowDSeries);
 
-            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, RSIPeriod);
+            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, NumberOfData);
 
             Stochastics stochastics;
             if (MapReduceAllowed)
-                stochastics = new Stochastics(Code, TargetDate, FastKPeriod, FastDPeriod, SlowDPeriod, FastKPeriod, true);
+                stochastics = new Stochastics(Code, TargetDate, FastKPeriod, FastDPeriod, SlowDPeriod, NumberOfData, true);
             else
-                stochastics = new Stochastics(Code, TargetDate, FastKPeriod, FastDPeriod, SlowDPeriod, FastKPeriod, false);
+                stochastics = new Stochastics(Code, TargetDate, FastKPeriod, FastDPeriod, SlowDPeriod, NumberOfData, false);
 
             int i;
             DateTime date;
@@ -520,14 +523,14 @@ namespace TechnicalIndicators.form
             williamsRCloseChart.Series.Add(closeSeries);
             williamsRIndicatorChart.Series.Add(wsrSeries);
 
-            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, RSIPeriod);
+            var closeData = IndicatorService.GetData(Code, TargetDate, new string[] { "Tarih", "Kapanis" }, NumberOfData);
             DateTime date;
             double[] wsr;
 
             if (MapReduceAllowed)
-                wsr = WilliamsR.WsrMR(Code, TargetDate, WilliamsRPeriod, WilliamsRPeriod);
+                wsr = WilliamsR.WsrMR(Code, TargetDate, WilliamsRPeriod, NumberOfData);
             else
-                wsr = WilliamsR.Wsr(Code, TargetDate, WilliamsRPeriod, WilliamsRPeriod);
+                wsr = WilliamsR.Wsr(Code, TargetDate, WilliamsRPeriod, NumberOfData);
 
 
             for (int i = 0; i < wsr.Length; i++)
